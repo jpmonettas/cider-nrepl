@@ -6,40 +6,21 @@
             [clojure.java.io :as io]
             [cider.nrepl.middleware.util.namespace :as ns]
             [cider.nrepl.middleware.util.misc :as u]
-            [cider.nrepl.middleware.util.spec :as spec])
+            [cider.nrepl.middleware.util.spec :as spec]
+            [cider.nrepl.middleware.spec :as spec-mid])
   (:import [clojure.lang LineNumberingPushbackReader]))
 
 ;;; ## Extractors
-
-(defn- format-spec-descripton
-  "Format the spec description to display each predicate on a new line."
-  [description]
-  (if (seq? description)
-    ;; drop the first element, format everything else with newlines and tabs,
-    ;; and add the surrounding parens
-    (let [beg (format "(%s " (pr-str (first description)))
-          desc (drop 1 description)]
-      (format "%s%s)" beg (str/join (map #(format "\n\t%s" (pr-str %)) desc))))
-    (pr-str description)))
-
-;; Similar to `print-doc` from clojure.core
-;; https://github.com/clojure/clojure/blob/master/src/clj/clojure/repl.clj#L83
-(defn- format-spec
-  [fnspec]
-  (for [role [:args :ret :fn]
-        :let [spec' (get fnspec role)]
-        :when spec']
-    (let [desc (spec/describe spec')]
-      ;; the -4s aligns the fdef parameters (args, ret and fn)
-      (str (format "%-4s: " (name role)) (format-spec-descripton desc)))))
+(declare var-name)
 
 (defn- maybe-add-spec
   "If the var `v` has a spec has associated with it, assoc that into meta-map.
   The spec is formatted to avoid processing it in CIDER."
   [v meta-map]
-  (if-let [fnspec (spec/get-spec v)]
-    (merge meta-map {:spec (format-spec fnspec)})
+  (if-let [spec (when v (spec-mid/spec-form (var-name v)))]
+    (merge meta-map {:spec spec})
     meta-map))
+
 
 (defn- maybe-add-file
   "If `meta-map` has no :file, assoc the :namespace file into it."
@@ -92,7 +73,8 @@
     (let [orig-sym sym
           sym (get '{& fn, catch try, finally try} sym sym)
           compiler-special? (special-symbol? orig-sym)
-          v   (meta (ns-resolve (find-ns 'clojure.core) sym))]
+          sym-var (ns-resolve (find-ns 'clojure.core) sym)
+          v   (meta sym-var)]
       (when-let [m (cond (special-symbol? sym) (#'repl/special-doc sym)
                          (:special-form v) v)]
         (cond-> m
@@ -104,7 +86,8 @@
           true (assoc :url (if (contains? m :url)
                              (when (:url m)
                                (str "https://clojure.org/" (:url m)))
-                             (str "https://clojure.org/special_forms#" (:name m)))))))
+                             (str "https://clojure.org/special_forms#" (:name m))))
+          true (maybe-add-spec sym-var))))
     (catch NoClassDefFoundError _)
     (catch Exception _)))
 
